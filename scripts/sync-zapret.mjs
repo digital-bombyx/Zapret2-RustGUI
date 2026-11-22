@@ -27,8 +27,10 @@ const git = (args) => execSync(`git -c safe.directory=* -C "${src}" ${args}`, { 
 const commit = git(`rev-parse --short ${ref}`);
 const tmp = mkdtempSync(join(tmpdir(), "zapret-sync-"));
 try {
-  // git archive → tar.exe (есть в Windows 10+): берём файлы ровно как в коммите.
-  execSync(`git -c safe.directory=* -C "${src}" archive --format=tar ${ref} | tar -x -C "${tmp}"`, {
+  // git archive → системный tar.exe (Windows 10+): берём файлы ровно как в коммите.
+  // Путь явный: GNU tar из Git принял бы "D:\..." за удалённый хост.
+  const tar = join(process.env.SystemRoot || "C:\\Windows", "System32", "tar.exe");
+  execSync(`git -c safe.directory=* -C "${src}" archive --format=tar ${ref} | "${tar}" -x -C "${tmp}"`, {
     stdio: ["ignore", "ignore", "inherit"],
     shell: "cmd.exe",
   });

@@ -48,7 +48,7 @@
 
 ## Установка
 
-1. Скачайте `Zapret2-RustGUI_x.y.z_x64-setup.exe` и установите.
+1. Скачайте `Zapret2-RustGUI_x.y.z_x64-setup.exe` со страницы [Releases](https://github.com/digital-bombyx/Zapret2-RustGUI/releases/latest) и установите. Рядом лежит `.sha256` для проверки.
 2. Запустите. Приложение попросит права администратора: они нужны WinDivert, службам и hosts.
 3. Нажмите на большую кнопку. Если сайты не открываются, выберите другую стратегию или запустите тест на вкладке «Тесты».
 
@@ -66,6 +66,8 @@ npm run tauri build
 ```
 
 Перед сборкой `scripts/sync-zapret.mjs` берёт чистую копию сборки из git (`git archive HEAD`) и кладёт её в ресурсы установщика. Готовый установщик появится в `src-tauri\target\release\bundle\nsis\`.
+
+Релизы собирает GitHub Actions ([`release.yml`](.github/workflows/release.yml)) при пуше тега `vX.Y.Z`. Встроенная сборка zapret там закреплена по коммиту, и это дерево файлов проверяется при каждом релизе.
 
 ## Благодарности
 

@@ -50,7 +50,7 @@ One installer, no console windows: one-click toggle, strategy picking and testin
 
 ## Install
 
-1. Download `Zapret2-RustGUI_x.y.z_x64-setup.exe` and install it.
+1. Download `Zapret2-RustGUI_x.y.z_x64-setup.exe` from [Releases](https://github.com/digital-bombyx/Zapret2-RustGUI/releases/latest) and install it. A `.sha256` file is attached for verification.
 2. Launch it. The app asks for administrator rights: WinDivert, services and hosts need them.
 3. Press the big button. If sites still don't open, pick another strategy or run a test on the Tests tab.
 
@@ -68,6 +68,8 @@ npm run tauri build
 ```
 
 Before building, `scripts/sync-zapret.mjs` takes a clean copy of the build from git (`git archive HEAD`) and puts it into the installer's resources. The installer ends up in `src-tauri\target\release\bundle\nsis\`.
+
+Releases are built by GitHub Actions ([`release.yml`](.github/workflows/release.yml)) when a `vX.Y.Z` tag is pushed. The bundled zapret build is pinned to a commit there, and that file tree is verified on every release.
 
 ## Acknowledgements
 

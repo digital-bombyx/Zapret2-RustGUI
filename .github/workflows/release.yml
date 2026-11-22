@@ -1,0 +1,124 @@
+name: Release
+
+# Сборка установщика Windows и публикация в GitHub Releases.
+# Запуск: пуш тега vX.Y.Z (версия тега должна совпадать с версией в tauri.conf.json)
+# или вручную из вкладки Actions — тогда установщик сохраняется только как артефакт.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  # Встроенная сборка zapret-discord-youtube: закреплённый main апстрима + PR #18202 (переход на zapret2).
+  # Когда PR вольют в апстрим — оставить только ZAPRET_BASE на новом коммите, а ZAPRET_PR* очистить.
+  ZAPRET_REPO: https://github.com/Flowseal/zapret-discord-youtube.git
+  ZAPRET_BASE: cf018db758623ed1813b9d93a6d7f3bdf01cc2b4
+  ZAPRET_PR: "18202"
+  ZAPRET_PR_SHA: 8511a718126d93c9fd1ff6bec3a560a7cb4e6867
+  # Дерево файлов, проверенное локально (test-pr-18202). Защита от «тихо поменявшейся» сборки.
+  ZAPRET_EXPECTED_TREE: 6032234e814b107ed95647745282706d81636bf7
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Проверить версию тега
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        run: |
+          $ver = (Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json).version
+          $tag = "${{ github.ref_name }}".TrimStart('v')
+          if ($ver -ne $tag) { throw "Тег v$tag не совпадает с версией $ver в tauri.conf.json" }
+
+      - name: Получить zapret-discord-youtube
+        shell: pwsh
+        run: |
+          $dir = Join-Path $env:RUNNER_TEMP "zapret-discord-youtube"
+          git clone --quiet $env:ZAPRET_REPO $dir
+          git -C $dir checkout --quiet $env:ZAPRET_BASE
+          if ($env:ZAPRET_PR) {
+            git -C $dir fetch --quiet origin "pull/$($env:ZAPRET_PR)/head"
+            $head = git -C $dir rev-parse FETCH_HEAD
+            if ($env:ZAPRET_PR_SHA -and $head -ne $env:ZAPRET_PR_SHA) {
+              Write-Host "::warning::PR #$($env:ZAPRET_PR) ушёл вперёд ($head), берём закреплённый $($env:ZAPRET_PR_SHA)"
+            }
+            $sha = if ($env:ZAPRET_PR_SHA) { $env:ZAPRET_PR_SHA } else { $head }
+            git -C $dir -c user.name=ci -c user.email=ci@localhost merge --quiet --no-ff --no-edit $sha
+            if ($LASTEXITCODE -ne 0) { throw "Конфликт при вливании PR #$($env:ZAPRET_PR)" }
+          }
+          $tree = git -C $dir rev-parse "HEAD^{tree}"
+          if ($env:ZAPRET_EXPECTED_TREE -and $tree -ne $env:ZAPRET_EXPECTED_TREE) {
+            throw "Дерево сборки $tree не совпадает с проверенным $($env:ZAPRET_EXPECTED_TREE)"
+          }
+          "ZAPRET_SRC=$dir" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Rust (MSVC)
+        run: rustup show active-toolchain || rustup toolchain install
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Зависимости
+        run: npm ci
+
+      - name: Проверки
+        run: |
+          npm run sync-zapret
+          npm run check
+          cd src-tauri
+          cargo test --locked
+
+      - name: Сборка установщика
+        run: npm run tauri build
+
+      - name: Контрольная сумма
+        id: sum
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem src-tauri/target/release/bundle/nsis/*-setup.exe | Select-Object -First 1
+          $hash = (Get-FileHash $exe.FullName -Algorithm SHA256).Hash.ToLower()
+          "$hash  $($exe.Name)" | Out-File "$($exe.FullName).sha256" -Encoding ascii -NoNewline
+          "exe=$($exe.FullName)" >> $env:GITHUB_OUTPUT
+          "name=$($exe.Name)" >> $env:GITHUB_OUTPUT
+          "hash=$hash" >> $env:GITHUB_OUTPUT
+          $bundle = Get-Content src-tauri/zapret/bundle.json -Raw | ConvertFrom-Json
+          "zapret=$($bundle.version)" >> $env:GITHUB_OUTPUT
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: installer
+          path: |
+            ${{ steps.sum.outputs.exe }}
+            ${{ steps.sum.outputs.exe }}.sha256
+
+      - name: GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Zapret2-RustGUI ${{ github.ref_name }}
+          files: |
+            ${{ steps.sum.outputs.exe }}
+            ${{ steps.sum.outputs.exe }}.sha256
+          body: |
+            Установщик для Windows 10/11 (x64). Внутри встроенная сборка zapret-discord-youtube ${{ steps.sum.outputs.zapret }} с [PR #18202](https://github.com/Flowseal/zapret-discord-youtube/pull/18202) (zapret2).
+
+            Windows 10/11 (x64) installer with the bundled zapret-discord-youtube ${{ steps.sum.outputs.zapret }} build including PR #18202 (zapret2).
+
+            **SHA256** `${{ steps.sum.outputs.name }}`:
+            ```
+            ${{ steps.sum.outputs.hash }}
+            ```
+
+            > Антивирусы иногда помечают `winws2.exe` / WinDivert внутри установщика. Проверьте суммы бинарников по [релизу zapret2](https://github.com/bol-van/zapret2/releases).
