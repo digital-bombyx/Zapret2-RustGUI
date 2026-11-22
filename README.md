@@ -21,14 +21,13 @@
 
 <table>
   <tr>
-    <td align="center"><img src="docs/main.png" width="250" alt="Главная" /><br /><sub><b>Главная</b> — тумблер, стратегия, Game Filter, IPSet, режим</sub></td>
-    <td align="center"><img src="docs/tests.png" width="250" alt="Тесты" /><br /><sub><b>Тесты</b> — сравнение стратегий и выбор лучшей</sub></td>
-    <td align="center"><img src="docs/lists.png" width="250" alt="Списки" /><br /><sub><b>Списки</b> — свои домены и исключения</sub></td>
+    <td align="center" valign="middle" rowspan="2"><img src="docs/main.png" width="380" alt="Главная" /><br /><sub><b>Главная</b> — тумблер, стратегия, Game Filter, IPSet, режим</sub></td>
+    <td align="center" valign="top"><img src="docs/tests.png" width="190" alt="Тесты" /><br /><sub><b>Тесты</b> — сравнение стратегий</sub></td>
+    <td align="center" valign="top"><img src="docs/lists.png" width="190" alt="Списки" /><br /><sub><b>Списки</b> — свои домены</sub></td>
   </tr>
   <tr>
-    <td align="center"><img src="docs/hosts.png" width="250" alt="Hosts" /><br /><sub><b>Hosts</b> — записи из сборки отдельным блоком</sub></td>
-    <td align="center"><img src="docs/settings.png" width="250" alt="Настройки" /><br /><sub><b>Настройки</b> — сборка, автозапуск, трей, язык</sub></td>
-    <td></td>
+    <td align="center" valign="top"><img src="docs/hosts.png" width="190" alt="Hosts" /><br /><sub><b>Hosts</b> — отдельный блок в hosts</sub></td>
+    <td align="center" valign="top"><img src="docs/settings.png" width="190" alt="Настройки" /><br /><sub><b>Настройки</b> — сборка, трей, язык</sub></td>
   </tr>
 </table>
 
