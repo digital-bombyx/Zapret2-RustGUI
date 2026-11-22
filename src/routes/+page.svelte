@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { api, on, type Status } from "$lib/api";
+  import { api, on, isTauri, type Status } from "$lib/api";
   import { app, refresh, toast, act } from "$lib/state.svelte";
   import { t } from "$lib/i18n.svelte";
   import TitleBar from "$lib/components/TitleBar.svelte";
@@ -31,6 +31,13 @@
   };
 
   onMount(() => {
+    if (!isTauri) {
+      const q = new URLSearchParams(location.search);
+      const t0 = q.get("tab") as Tab | null;
+      if (t0 && tabs.some((x) => x.id === t0)) tab = t0;
+      const l = q.get("lang");
+      if (l === "en" || l === "ru") api.setLanguage(l);
+    }
     refresh();
     const un = [
       on<Status>("status", (s) => {
@@ -96,7 +103,7 @@
     height: 100vh;
     display: flex;
     flex-direction: column;
-    background: radial-gradient(140% 60% at 50% -10%, #232919 0%, var(--bg) 55%);
+    background: var(--bg);
   }
   .banner {
     display: flex;

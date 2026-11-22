@@ -186,9 +186,6 @@
     flex-direction: column;
     align-items: center;
     padding: 16px 18px 18px;
-    background:
-      radial-gradient(120% 80% at 50% 0%, rgba(157, 176, 127, 0.08), transparent 60%),
-      linear-gradient(180deg, var(--panel) 0%, var(--bg-2) 100%);
   }
   .prompt {
     align-self: flex-start;
@@ -252,10 +249,8 @@
     display: grid;
     place-items: center;
     color: var(--faint);
-    background: radial-gradient(circle at 50% 35%, var(--panel-3), var(--panel));
-    box-shadow:
-      0 1px 0 rgba(255, 245, 220, 0.06) inset,
-      0 8px 22px -8px rgba(0, 0, 0, 0.7);
+    background: var(--panel-2);
+    border: 1px solid var(--border);
     transition: color 0.3s, background 0.3s, transform 0.15s;
   }
   .power:not(:disabled):hover .core {
@@ -264,7 +259,8 @@
   }
   .power.on .core {
     color: #1f2317;
-    background: radial-gradient(circle at 50% 35%, #c9e0a0, #9db07f);
+    background: var(--sage);
+    border-color: var(--sage);
   }
   .state-line {
     font-size: 11.5px;

@@ -12,3 +12,4 @@ src-tauri/zapret/
 # Локальные файлы разработки
 .claude/
 CLAUDE.md
+desktop.ini

@@ -29,9 +29,8 @@
   --red: #d0705c;
   --red-soft: rgba(208, 112, 92, 0.14);
   --yellow: #d9c25e;
-  --radius: 16px;
+  --radius: 12px;
   --radius-sm: 11px;
-  --shadow: 0 1px 0 rgba(255, 245, 220, 0.04) inset, 0 10px 30px -12px rgba(0, 0, 0, 0.6);
   --mono: "JetBrains Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
   --sans: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
   color-scheme: dark;
@@ -74,10 +73,11 @@ body {
 }
 
 .card {
-  background: linear-gradient(180deg, var(--panel) 0%, var(--bg-2) 100%);
+  /* Плоская карточка как в профиле: ровный фон, тонкая рамка, янтарная полоса слева. */
+  background: var(--bg-2);
   border: 1px solid var(--border-soft);
+  border-left: 3px solid var(--amber);
   border-radius: var(--radius);
-  box-shadow: var(--shadow);
 }
 
 .label {

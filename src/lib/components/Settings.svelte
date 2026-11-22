@@ -77,7 +77,7 @@
     <div class="line">
       <div>
         <div class="t">{t("Крестик сворачивает в трей", "Close button hides to tray")}</div>
-        <div class="hint faint mono">{t("иначе закрытие окна завершает приложение и выключает обход-процесс", "otherwise closing the window quits the app and stops the bypass process")}</div>
+        <div class="hint faint mono">{t("окно выгружается из памяти, обход работает дальше; иначе крестик завершает приложение", "the window is unloaded from memory, the bypass keeps running; otherwise closing quits the app")}</div>
       </div>
       <Switch checked={ov.close_to_tray} disabled={app.busy} onchange={(v) => act(() => api.setCloseToTray(v))} />
     </div>

@@ -21,17 +21,16 @@ One installer, no console windows: one-click toggle, strategy picking and testin
 
 <table>
   <tr>
-    <td align="center" valign="middle" rowspan="2"><img src="docs/main.png" width="380" alt="Home" /><br /><sub><b>Home</b> — toggle, strategy, Game Filter, IPSet, mode</sub></td>
-    <td align="center" valign="top"><img src="docs/tests.png" width="190" alt="Tests" /><br /><sub><b>Tests</b> — compare strategies</sub></td>
-    <td align="center" valign="top"><img src="docs/lists.png" width="190" alt="Lists" /><br /><sub><b>Lists</b> — your own domains</sub></td>
+    <td align="center" valign="middle" rowspan="2"><img src="docs/en/main.png" width="380" alt="Home" /><br /><sub><b>Home</b> — toggle, strategy, Game Filter, IPSet, mode</sub></td>
+    <td align="center" valign="top"><img src="docs/en/tests.png" width="190" alt="Tests" /><br /><sub><b>Tests</b> — compare strategies</sub></td>
+    <td align="center" valign="top"><img src="docs/en/lists.png" width="190" alt="Lists" /><br /><sub><b>Lists</b> — your own domains</sub></td>
   </tr>
   <tr>
-    <td align="center" valign="top"><img src="docs/hosts.png" width="190" alt="Hosts" /><br /><sub><b>Hosts</b> — a separate hosts block</sub></td>
-    <td align="center" valign="top"><img src="docs/settings.png" width="190" alt="Settings" /><br /><sub><b>Settings</b> — build, tray, language</sub></td>
+    <td align="center" valign="top"><img src="docs/en/hosts.png" width="190" alt="Hosts" /><br /><sub><b>Hosts</b> — a separate hosts block</sub></td>
+    <td align="center" valign="top"><img src="docs/en/settings.png" width="190" alt="Settings" /><br /><sub><b>Settings</b> — build, tray, language</sub></td>
   </tr>
 </table>
 
-<sub>The screenshots show the Russian UI; switch to English in Settings → Language.</sub>
 
 ## Features
 

@@ -485,12 +485,62 @@ fn refresh_tray(app: &AppHandle) {
     }
 }
 
+/// Показать окно. Если оно было закрыто в трей (уничтожено вместе с WebView2),
+/// создать заново из конфигурации. Создание — в отдельном потоке: на Windows
+/// построение окна из обработчика событий главного потока может зависнуть.
 fn show_main(app: &AppHandle) {
     if let Some(w) = app.get_webview_window("main") {
         let _ = w.unminimize();
         let _ = w.show();
         let _ = w.set_focus();
+        return;
     }
+    let app = app.clone();
+    std::thread::spawn(move || {
+        let Some(cfg) = app.config().app.windows.iter().find(|w| w.label == "main").cloned() else { return };
+        if let Ok(w) = tauri::WebviewWindowBuilder::from_config(&app, &cfg).and_then(|b| b.build()) {
+            let _ = w.show();
+            let _ = w.set_focus();
+        }
+    });
+}
+
+/// Свёрнутое окно: спрятать и приостановить WebView2, попросить его отдать память.
+/// Развёрнутое: вернуть как было.
+#[cfg(windows)]
+fn webview_low_memory(app: &AppHandle, low: bool) {
+    use webview2_com::Microsoft::Web::WebView2::Win32::{
+        ICoreWebView2_19, ICoreWebView2_3, COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL_LOW,
+        COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL_NORMAL,
+    };
+    use windows_core::Interface;
+    let Some(w) = app.get_webview_window("main") else { return };
+    let _ = w.with_webview(move |pw| unsafe {
+        let ctrl = pw.controller();
+        let Ok(core) = ctrl.CoreWebView2() else { return };
+        if low {
+            let _ = ctrl.SetIsVisible(false.into());
+        }
+        if let Ok(c19) = core.cast::<ICoreWebView2_19>() {
+            let level = if low {
+                COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL_LOW
+            } else {
+                COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL_NORMAL
+            };
+            let _ = c19.SetMemoryUsageTargetLevel(level);
+        }
+        if let Ok(c3) = core.cast::<ICoreWebView2_3>() {
+            if low {
+                let handler = webview2_com::TrySuspendCompletedHandler::create(Box::new(|_, _| Ok(())));
+                let _ = c3.TrySuspend(&handler);
+            } else {
+                let _ = c3.Resume();
+            }
+        }
+        if !low {
+            let _ = ctrl.SetIsVisible(true.into());
+        }
+    });
 }
 
 fn on_tray_menu(app: &AppHandle, id: &str) {
@@ -600,17 +650,28 @@ pub fn run() {
                 refresh_tray(&handle);
             });
 
-            if !start_in_tray {
+            if start_in_tray {
+                // В трее окно не нужно: не держим WebView2 в памяти до первого открытия.
+                if let Some(w) = app.get_webview_window("main") {
+                    let _ = w.destroy();
+                }
+            } else {
                 show_main(app.handle());
             }
             Ok(())
         })
         .on_window_event(|window, event| {
-            if let WindowEvent::CloseRequested { api, .. } = event {
-                let app = window.app_handle();
-                if app.state::<AppState>().settings.lock().unwrap().close_to_tray {
-                    api.prevent_close();
-                    let _ = window.hide();
+            // Закрытие в трей = окно уничтожается вместе с WebView2 (основная часть RAM);
+            // само приложение остаётся жить — см. ExitRequested ниже.
+            #[cfg(windows)]
+            if let WindowEvent::Resized(_) = event {
+                let minimized = window.is_minimized().unwrap_or(false);
+                let app = window.app_handle().clone();
+                // Состояние «свёрнуто» меняется редко, но Resized сыплется при перетаскивании
+                // границ — реагируем только на смену состояния.
+                static WAS_MIN: AtomicBool = AtomicBool::new(false);
+                if WAS_MIN.swap(minimized, Ordering::SeqCst) != minimized {
+                    webview_low_memory(&app, minimized);
                 }
             }
         })
@@ -647,6 +708,13 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|app, event| {
+            // Последнее окно закрыто крестиком (code = None) при «сворачивать в трей» —
+            // приложение продолжает работать в трее без окна. Выход из меню трея — app.exit(0).
+            if let tauri::RunEvent::ExitRequested { code: None, api, .. } = &event {
+                if app.state::<AppState>().settings.lock().unwrap().close_to_tray {
+                    api.prevent_exit();
+                }
+            }
             // Процесс winws2, запущенный нами, при выходе гасим; служба продолжает работать.
             if let tauri::RunEvent::Exit = event {
                 let st = app.state::<AppState>();

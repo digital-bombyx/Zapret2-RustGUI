@@ -95,9 +95,10 @@ export async function mockInvoke(cmd: string, args: any = {}): Promise<any> {
       return ["winws2 started", "lua init ok"];
     case "hosts_status":
       return {
-        source: "сборка (.service\\hosts)",
-        groups: ["discord.com", "discordapp.net", "github.com", "githubusercontent.com", "t.me", "telegram.dog", "telegram.me", "telegram.org", "telegram.space", "telesco.pe", "tg.dev"].map(
-          (g) => ({ name: g, entries: [{ ip: "140.82.121.3", host: g, in_block: false, manual: false }] }),
+        source: state.language === "en" ? "build (.service\\hosts)" : "сборка (.service\\hosts)",
+        // Группы и размеры как в настоящем .service\hosts.
+        groups: ([["discord.com", 8], ["discordapp.net", 8], ["github.com", 1], ["githubusercontent.com", 36], ["t.me", 1], ["telegram.dog", 1], ["telegram.me", 1], ["telegram.org", 21], ["telegram.space", 1], ["telesco.pe", 8], ["tg.dev", 2]] as [string, number][]).map(
+          ([g, n]) => ({ name: g, entries: Array.from({ length: n }, (_, i) => ({ ip: "140.82.121.3", host: i ? `h${i}.${g}` : g, in_block: true, manual: false })) }),
         ),
         custom: [],
         block_present: true,

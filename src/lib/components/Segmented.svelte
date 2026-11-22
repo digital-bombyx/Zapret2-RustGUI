@@ -47,7 +47,6 @@
   .seg button.active {
     background: var(--panel-3);
     color: var(--text);
-    box-shadow: 0 1px 0 rgba(255, 245, 220, 0.06) inset, 0 2px 8px -2px rgba(0, 0, 0, 0.5);
   }
   .small button {
     height: 22px;

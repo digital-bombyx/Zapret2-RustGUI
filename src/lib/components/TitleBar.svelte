@@ -34,7 +34,7 @@
     align-items: center;
     padding: 0 14px;
     border-bottom: 1px solid var(--border-soft);
-    background: linear-gradient(180deg, #262b1c, #1f2317);
+    background: var(--bg-2);
   }
   /* Хитбоксы как у кнопок Windows: прямоугольник на всю высоту шапки,
      видимая часть — прежний кружок по центру. */
