@@ -1,6 +1,6 @@
 [package]
 name = "zapret2-rustgui"
-version = "0.1.0"
+version = "0.1.1"
 description = "Lightweight GUI for zapret-discord-youtube (zapret2 / winws2)"
 authors = ["digital-bombyx"]
 license = "MIT"
