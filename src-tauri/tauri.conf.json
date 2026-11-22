@@ -1,0 +1,43 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Zapret2-RustGUI",
+  "version": "0.1.0",
+  "identifier": "dev.digitalbombyx.zapret2gui",
+  "build": {
+    "beforeDevCommand": "npm run sync-zapret && npm run dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "npm run sync-zapret && npm run build",
+    "frontendDist": "../build"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "Zapret2",
+        "width": 500,
+        "height": 790,
+        "minWidth": 440,
+        "minHeight": 560,
+        "decorations": false,
+        "transparent": false,
+        "theme": "Dark",
+        "center": true,
+        "visible": false,
+        "backgroundColor": "#171a10",
+        "dragDropEnabled": false
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src ipc: http://ipc.localhost"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis"],
+    "publisher": "digital-bombyx",
+    "category": "Utility",
+    "shortDescription": "GUI for zapret-discord-youtube",
+    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/icon.ico"],
+    "resources": { "zapret/": "zapret/" }
+  }
+}

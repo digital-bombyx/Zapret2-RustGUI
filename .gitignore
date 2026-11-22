@@ -1,0 +1,14 @@
+node_modules
+/build
+/.svelte-kit
+/package
+.env
+.env.*
+vite.config.js.timestamp-*
+src-tauri/target/
+src-tauri/gen/schemas
+src-tauri/zapret/
+
+# Локальные файлы разработки
+.claude/
+CLAUDE.md

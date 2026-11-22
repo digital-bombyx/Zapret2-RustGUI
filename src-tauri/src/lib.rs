@@ -1,0 +1,657 @@
+mod autostart;
+mod bundled;
+mod game_filter;
+mod hosts;
+mod i18n;
+mod ipset;
+mod lists;
+mod runner;
+mod service;
+mod settings;
+mod strategy;
+mod tester;
+mod util;
+mod winapi;
+mod zapret_dir;
+
+use serde::Serialize;
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Mutex;
+use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu};
+use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
+use tauri::{AppHandle, Emitter, Manager, State, WindowEvent};
+
+type R<T> = Result<T, String>;
+
+pub struct AppState {
+    config_dir: PathBuf,
+    settings: Mutex<settings::Settings>,
+    runner: runner::Runner,
+    testing: AtomicBool,
+    cancel: AtomicBool,
+    last_test: Mutex<Option<tester::TestRun>>,
+    /// Развёрнутая встроенная сборка (если она есть в установщике).
+    bundled_dir: Option<PathBuf>,
+    bundle_error: Mutex<Option<String>>,
+}
+
+impl AppState {
+    fn dir(&self) -> R<PathBuf> {
+        let configured = self.settings.lock().unwrap().zapret_dir.clone();
+        zapret_dir::detect(configured.as_deref(), self.bundled_dir.as_deref())
+            .ok_or_else(|| tr!("Папка zapret-discord-youtube не найдена — укажите её в настройках", "zapret-discord-youtube folder not found — set it in Settings"))
+    }
+    fn update(&self, f: impl FnOnce(&mut settings::Settings)) {
+        let mut s = self.settings.lock().unwrap();
+        f(&mut s);
+        settings::save(&self.config_dir, &s);
+    }
+    fn history_path(&self) -> PathBuf {
+        self.config_dir.join("test-history.json")
+    }
+    fn hosts_cache(&self) -> PathBuf {
+        self.config_dir.join("hosts-upstream.txt")
+    }
+    fn require_admin(&self) -> R<()> {
+        if winapi::is_admin() {
+            Ok(())
+        } else {
+            Err(tr!("Нужны права администратора: запустите приложение от имени администратора", "Administrator rights required: run the app as administrator"))
+        }
+    }
+    fn require_idle(&self) -> R<()> {
+        if self.testing.load(Ordering::SeqCst) {
+            Err(tr!("Идёт тестирование стратегий — дождитесь окончания или отмените его", "Strategy test in progress — wait for it to finish or cancel it"))
+        } else {
+            Ok(())
+        }
+    }
+
+    /// Аргументы выбранной стратегии с учётом Game Filter.
+    fn selected_args(&self, dir: &std::path::Path) -> R<(String, Vec<String>)> {
+        let file = self
+            .settings
+            .lock()
+            .unwrap()
+            .strategy
+            .clone()
+            .or_else(|| strategy::list(dir).first().map(|s| s.file.clone()))
+            .ok_or_else(|| tr!("В папке нет стратегий general*.bat", "No general*.bat strategies in the folder"))?;
+        let gf = game_filter::load(dir);
+        let (tcp, udp) = game_filter::vars(&gf);
+        let args = strategy::build_args(dir, &file, &strategy::Vars::new(dir, &tcp, &udp))?;
+        Ok((file, args))
+    }
+
+    /// Включить обход выбранной стратегией в выбранном режиме.
+    fn apply(&self) -> R<()> {
+        self.require_admin()?;
+        self.require_idle()?;
+        let dir = self.dir()?;
+        let (file, args) = self.selected_args(&dir)?;
+        let mode = self.settings.lock().unwrap().mode.clone();
+        if mode == "service" {
+            self.runner.stop_processes();
+            lists::ensure(&dir);
+            service::install(&dir, file.trim_end_matches(".bat"), &args)?;
+            self.runner.clear_error();
+            self.runner.notify_changed();
+        } else {
+            if service::state(service::NAME).0 {
+                service::stop_and_delete(service::NAME)?;
+            }
+            self.runner.start(&dir, &file, &args)?;
+        }
+        self.update(|s| {
+            s.last_enabled = true;
+            s.strategy = Some(file);
+        });
+        Ok(())
+    }
+
+    fn disable(&self) -> R<()> {
+        self.require_admin()?;
+        self.require_idle()?;
+        if service::state(service::NAME).0 {
+            service::remove_all()?;
+        }
+        self.runner.stop();
+        self.update(|s| s.last_enabled = false);
+        Ok(())
+    }
+
+    /// После изменения настроек перезапустить, если обход работает под нашим управлением.
+    fn restart_if_running(&self) -> R<()> {
+        let st = self.runner.status();
+        if st.running && (st.mode == "process" || st.mode == "service") {
+            self.apply()?;
+        }
+        Ok(())
+    }
+}
+
+#[derive(Serialize)]
+struct Overview {
+    admin: bool,
+    dir: Option<String>,
+    version: Option<String>,
+    strategies: Vec<strategy::StrategyInfo>,
+    selected: Option<String>,
+    status: runner::Status,
+    game_filter: game_filter::GameFilter,
+    ipset: String,
+    ipset_has_backup: bool,
+    mode: String,
+    autostart: bool,
+    close_to_tray: bool,
+    test_timeout: u32,
+    test_parallel: usize,
+    testing: bool,
+    language: String,
+    /// bundled — встроенная сборка; custom — своя папка из настроек; found — найдена на диске.
+    dir_source: &'static str,
+    bundled_version: Option<String>,
+    bundle_error: Option<String>,
+}
+
+fn overview_of(state: &AppState) -> Overview {
+    let dir = state.dir().ok();
+    let s = state.settings.lock().unwrap().clone();
+    let strategies = dir.as_deref().map(strategy::list).unwrap_or_default();
+    let selected = s
+        .strategy
+        .clone()
+        .filter(|f| strategies.iter().any(|x| &x.file == f))
+        .or_else(|| strategies.first().map(|x| x.file.clone()));
+    Overview {
+        admin: winapi::is_admin(),
+        version: dir.as_deref().and_then(zapret_dir::version),
+        game_filter: dir.as_deref().map(game_filter::load).unwrap_or_default(),
+        ipset: dir.as_deref().map(ipset::status).unwrap_or("none").into(),
+        ipset_has_backup: dir.as_deref().is_some_and(ipset::has_backup),
+        dir: dir.map(|d| d.to_string_lossy().into_owned()),
+        strategies,
+        selected,
+        status: state.runner.status(),
+        mode: s.mode,
+        autostart: autostart::is_enabled(),
+        close_to_tray: s.close_to_tray,
+        test_timeout: s.test_timeout,
+        test_parallel: s.test_parallel,
+        testing: state.testing.load(Ordering::SeqCst),
+        dir_source: match (&state.dir().ok(), &state.bundled_dir, &s.zapret_dir) {
+            (Some(d), _, Some(c)) if !c.trim().is_empty() && d == &PathBuf::from(c) => "custom",
+            (Some(d), Some(b), _) if d == b => "bundled",
+            _ => "found",
+        },
+        bundled_version: state.bundled_dir.as_deref().and_then(bundled::version),
+        bundle_error: state.bundle_error.lock().unwrap().clone(),
+        language: state.settings.lock().unwrap().language.clone(),
+    }
+}
+
+// ---------- команды ----------
+
+#[tauri::command(async)]
+fn overview(state: State<AppState>) -> Overview {
+    overview_of(&state)
+}
+
+#[tauri::command(async)]
+fn status(state: State<AppState>) -> runner::Status {
+    state.runner.status()
+}
+
+#[tauri::command(async)]
+fn log_tail(state: State<AppState>) -> Vec<String> {
+    state.runner.log_tail(200)
+}
+
+#[tauri::command(async)]
+fn set_zapret_dir(state: State<AppState>, path: String) -> R<Overview> {
+    // Пустой путь — вернуться к встроенной сборке.
+    if path.trim().is_empty() {
+        state.update(|s| s.zapret_dir = None);
+        return Ok(overview_of(&state));
+    }
+    let p = PathBuf::from(path.trim());
+    if !zapret_dir::is_valid(&p) {
+        return Err(tr!("В папке нет bin\\winws2.exe, lua\\ или lists\\", "Folder has no bin\\winws2.exe, lua\\ or lists\\"));
+    }
+    state.update(|s| s.zapret_dir = Some(p.to_string_lossy().into_owned()));
+    Ok(overview_of(&state))
+}
+
+#[tauri::command(async)]
+fn select_strategy(app: AppHandle, state: State<AppState>, file: String) -> R<()> {
+    state.update(|s| s.strategy = Some(file));
+    let r = state.restart_if_running();
+    refresh_tray(&app);
+    r
+}
+
+#[tauri::command(async)]
+fn enable(state: State<AppState>) -> R<()> {
+    state.apply()
+}
+
+#[tauri::command(async)]
+fn disable(state: State<AppState>) -> R<()> {
+    state.disable()
+}
+
+#[tauri::command(async)]
+fn set_mode(state: State<AppState>, mode: String) -> R<()> {
+    if mode != "process" && mode != "service" {
+        return Err(tr!("некорректный режим", "invalid mode"));
+    }
+    let was_running = state.runner.status();
+    state.update(|s| s.mode = mode);
+    if was_running.running && was_running.mode != "external" {
+        state.apply()?;
+    }
+    Ok(())
+}
+
+#[tauri::command(async)]
+fn set_game_filter(state: State<AppState>, gf: game_filter::GameFilter) -> R<()> {
+    state.require_idle()?;
+    game_filter::save(&state.dir()?, &gf)?;
+    state.restart_if_running()
+}
+
+#[tauri::command(async)]
+fn set_ipset(state: State<AppState>, mode: String) -> R<()> {
+    state.require_idle()?;
+    ipset::set(&state.dir()?, &mode)?;
+    state.restart_if_running()
+}
+
+#[tauri::command(async)]
+fn strategy_command(state: State<AppState>, file: String) -> R<Vec<String>> {
+    let dir = state.dir()?;
+    let (tcp, udp) = game_filter::vars(&game_filter::load(&dir));
+    strategy::build_args(&dir, &file, &strategy::Vars::new(&dir, &tcp, &udp))
+}
+
+#[tauri::command(async)]
+fn list_read(state: State<AppState>, kind: String) -> R<String> {
+    lists::read(&state.dir()?, &kind)
+}
+
+#[tauri::command(async)]
+fn list_write(state: State<AppState>, kind: String, content: String) -> R<lists::SaveResult> {
+    state.require_idle()?;
+    let r = lists::write(&state.dir()?, &kind, &content)?;
+    state.restart_if_running()?;
+    Ok(r)
+}
+
+#[tauri::command(async)]
+fn test_targets(state: State<AppState>) -> R<Vec<(String, String)>> {
+    Ok(tester::load_targets(&state.dir()?))
+}
+
+#[tauri::command(async)]
+fn test_start(app: AppHandle, state: State<AppState>, kind: String, files: Vec<String>) -> R<()> {
+    state.require_admin()?;
+    let dir = state.dir()?;
+    if files.is_empty() {
+        return Err(tr!("Не выбрано ни одной стратегии", "No strategies selected"));
+    }
+    if state.testing.swap(true, Ordering::SeqCst) {
+        return Err(tr!("Тест уже идёт", "A test is already running"));
+    }
+    state.cancel.store(false, Ordering::SeqCst);
+    let params = {
+        let s = state.settings.lock().unwrap();
+        tester::Params { timeout: s.test_timeout.clamp(2, 30), parallel: s.test_parallel.clamp(1, 32) }
+    };
+    std::thread::spawn(move || {
+        let st = app.state::<AppState>();
+        let gf = game_filter::load(&dir);
+        let ctx = tester::Ctx { dir: &dir, runner: &st.runner, cancel: &st.cancel, game_vars: game_filter::vars(&gf) };
+        let emit_app = app.clone();
+        let run = tester::run(ctx, &kind, files, params, move |r| {
+            let _ = emit_app.emit("test-progress", r);
+        });
+        *st.last_test.lock().unwrap() = Some(run.clone());
+        // История: последние 10 прогонов.
+        let mut hist: Vec<tester::TestRun> = std::fs::read(st.history_path())
+            .ok()
+            .and_then(|b| serde_json::from_slice(&b).ok())
+            .unwrap_or_default();
+        if !run.results.is_empty() {
+            hist.insert(0, run);
+            hist.truncate(10);
+            if let Ok(j) = serde_json::to_vec(&hist) {
+                let _ = std::fs::write(st.history_path(), j);
+            }
+        }
+        st.testing.store(false, Ordering::SeqCst);
+        let _ = app.emit("test-finished", ());
+        refresh_tray(&app);
+    });
+    Ok(())
+}
+
+#[tauri::command]
+fn test_cancel(state: State<AppState>) {
+    state.cancel.store(true, Ordering::SeqCst);
+}
+
+#[tauri::command(async)]
+fn test_last(state: State<AppState>) -> Option<tester::TestRun> {
+    state.last_test.lock().unwrap().clone()
+}
+
+#[tauri::command(async)]
+fn test_history(state: State<AppState>) -> Vec<tester::TestRun> {
+    std::fs::read(state.history_path()).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default()
+}
+
+#[tauri::command(async)]
+fn set_test_params(state: State<AppState>, timeout: u32, parallel: usize) {
+    state.update(|s| {
+        s.test_timeout = timeout.clamp(2, 30);
+        s.test_parallel = parallel.clamp(1, 32);
+    });
+}
+
+#[tauri::command(async)]
+fn hosts_status(state: State<AppState>) -> R<hosts::Status> {
+    let dir = state.dir()?;
+    let custom = state.settings.lock().unwrap().hosts_custom.clone();
+    Ok(hosts::status(&dir, &state.hosts_cache(), &custom))
+}
+
+#[tauri::command(async)]
+fn hosts_apply(state: State<AppState>, entries: Vec<hosts::Entry>, custom: Vec<hosts::Entry>) -> R<()> {
+    state.require_admin()?;
+    for e in entries.iter().chain(custom.iter()) {
+        if e.ip.parse::<std::net::IpAddr>().is_err() || e.host.is_empty() || e.host.contains(char::is_whitespace) {
+            let (ip, host) = (&e.ip, &e.host);
+            return Err(tr!("некорректная запись: {ip} {host}", "invalid entry: {ip} {host}"));
+        }
+    }
+    state.update(|s| s.hosts_custom = custom.clone());
+    let all: Vec<hosts::Entry> = entries.into_iter().chain(custom).collect();
+    hosts::apply(&all)
+}
+
+#[tauri::command(async)]
+fn hosts_remove(state: State<AppState>) -> R<()> {
+    state.require_admin()?;
+    hosts::apply(&[])
+}
+
+#[tauri::command(async)]
+fn hosts_update(state: State<AppState>) -> R<usize> {
+    hosts::update_upstream(&state.hosts_cache())
+}
+
+#[tauri::command(async)]
+fn set_autostart(enabled: bool) -> R<bool> {
+    autostart::set(enabled)?;
+    Ok(autostart::is_enabled())
+}
+
+#[tauri::command(async)]
+fn set_language(app: AppHandle, state: State<AppState>, lang: String) {
+    let lang = if lang == "en" { "en" } else { "ru" }.to_string();
+    i18n::set_lang(&lang);
+    state.update(|s| s.language = lang);
+    refresh_tray(&app);
+}
+
+#[tauri::command(async)]
+fn set_close_to_tray(state: State<AppState>, enabled: bool) {
+    state.update(|s| s.close_to_tray = enabled);
+}
+
+#[tauri::command(async)]
+fn open_path(path: String) -> R<()> {
+    let p = PathBuf::from(&path);
+    if !p.exists() {
+        return Err(tr!("путь не найден", "path not found"));
+    }
+    std::process::Command::new("explorer.exe").arg(p).spawn().map(|_| ()).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn quit_app(app: AppHandle) {
+    app.exit(0);
+}
+
+// ---------- трей ----------
+
+fn tray_icon(on: bool) -> tauri::image::Image<'static> {
+    const S: usize = 32;
+    let (r, g, b) = if on { (0xd9, 0xa2, 0x5b) } else { (0x7e, 0x84, 0x66) };
+    let mut px = vec![0u8; S * S * 4];
+    let c = (S as f32 - 1.0) / 2.0;
+    for y in 0..S {
+        for x in 0..S {
+            let d = ((x as f32 - c).powi(2) + (y as f32 - c).powi(2)).sqrt();
+            let i = (y * S + x) * 4;
+            // Кольцо + точка: «спиннинг»-индикатор из профиля.
+            let ring = (d - 12.5).abs();
+            let a_ring = (1.6 - ring).clamp(0.0, 1.0);
+            let a_dot = (6.5 - d).clamp(0.0, 1.0);
+            let a = a_ring.max(if on { a_dot } else { a_dot * 0.55 });
+            px[i] = r;
+            px[i + 1] = g;
+            px[i + 2] = b;
+            px[i + 3] = (a * 255.0) as u8;
+        }
+    }
+    tauri::image::Image::new_owned(px, S as u32, S as u32)
+}
+
+fn build_tray_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
+    let state = app.state::<AppState>();
+    let st = state.runner.status();
+    let selected = state.settings.lock().unwrap().strategy.clone();
+    let dir = state.dir().ok();
+    let strategies = dir.as_deref().map(strategy::list).unwrap_or_default();
+    let label = if st.running { tr!("Выключить обход", "Turn bypass off") } else { tr!("Включить обход", "Turn bypass on") };
+    let toggle = MenuItem::with_id(app, "toggle", label, true, None::<&str>)?;
+    let sub = Submenu::with_id(app, "strategies", tr!("Стратегия", "Strategy"), true)?;
+    for s in &strategies {
+        let checked = selected.as_deref() == Some(s.file.as_str());
+        sub.append(&CheckMenuItem::with_id(app, format!("s:{}", s.file), &s.name, true, checked, None::<&str>)?)?;
+    }
+    let open = MenuItem::with_id(app, "open", tr!("Открыть", "Open"), true, None::<&str>)?;
+    let quit = MenuItem::with_id(app, "quit", tr!("Выход", "Quit"), true, None::<&str>)?;
+    Menu::with_items(app, &[&toggle, &sub, &PredefinedMenuItem::separator(app)?, &open, &quit])
+}
+
+fn refresh_tray(app: &AppHandle) {
+    let Some(tray) = app.tray_by_id("main") else { return };
+    let st = app.state::<AppState>().runner.status();
+    let _ = tray.set_icon(Some(tray_icon(st.running)));
+    let tip = match (&st.running, &st.strategy) {
+        (true, Some(s)) => {
+            let s = s.trim_end_matches(".bat");
+            tr!("Zapret2 — включён\n{s}", "Zapret2 — on\n{s}")
+        }
+        (true, None) => tr!("Zapret2 — включён", "Zapret2 — on"),
+        _ => tr!("Zapret2 — выключен", "Zapret2 — off"),
+    };
+    let _ = tray.set_tooltip(Some(tip));
+    if let Ok(menu) = build_tray_menu(app) {
+        let _ = tray.set_menu(Some(menu));
+    }
+}
+
+fn show_main(app: &AppHandle) {
+    if let Some(w) = app.get_webview_window("main") {
+        let _ = w.unminimize();
+        let _ = w.show();
+        let _ = w.set_focus();
+    }
+}
+
+fn on_tray_menu(app: &AppHandle, id: &str) {
+    match id {
+        "open" => show_main(app),
+        "quit" => app.exit(0),
+        "toggle" => {
+            let app = app.clone();
+            std::thread::spawn(move || {
+                let st = app.state::<AppState>();
+                let r = if st.runner.status().running { st.disable() } else { st.apply() };
+                if let Err(e) = r {
+                    let _ = app.emit("error", e);
+                    show_main(&app);
+                }
+                refresh_tray(&app);
+            });
+        }
+        other => {
+            if let Some(file) = other.strip_prefix("s:") {
+                let app = app.clone();
+                let file = file.to_string();
+                std::thread::spawn(move || {
+                    let st = app.state::<AppState>();
+                    st.update(|s| s.strategy = Some(file));
+                    if let Err(e) = st.restart_if_running() {
+                        let _ = app.emit("error", e);
+                    }
+                    let _ = app.emit("overview-changed", ());
+                    refresh_tray(&app);
+                });
+            }
+        }
+    }
+}
+
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
+pub fn run() {
+    let start_in_tray = std::env::args().any(|a| a == "--tray");
+    tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| show_main(app)))
+        .setup(move |app| {
+            let config_dir = app.path().app_config_dir().unwrap_or_else(|_| std::env::temp_dir().join("Zapret2-RustGUI"));
+            let settings = settings::load(&config_dir);
+            i18n::set_lang(&settings.language);
+
+            // Встроенный zapret: развернуть/обновить из ресурсов в папку данных.
+            let mut bundle_error = None;
+            let bundled_dir = match (app.path().resource_dir(), app.path().app_local_data_dir()) {
+                (Ok(res), Ok(local)) => {
+                    let dst = bundled::target_root(&local);
+                    if let Err(e) = bundled::ensure(&bundled::resource_root(&res), &dst) {
+                        bundle_error = Some(e);
+                    }
+                    zapret_dir::is_valid(&dst).then_some(dst)
+                }
+                _ => None,
+            };
+
+            app.manage(AppState {
+                bundled_dir,
+                bundle_error: Mutex::new(bundle_error),
+                config_dir,
+                settings: Mutex::new(settings),
+                runner: runner::Runner::new(),
+                testing: AtomicBool::new(false),
+                cancel: AtomicBool::new(false),
+                last_test: Mutex::new(None),
+            });
+
+            let handle = app.handle().clone();
+            app.state::<AppState>().runner.set_notify(move || {
+                let st = handle.state::<AppState>().runner.status();
+                let _ = handle.emit("status", &st);
+                refresh_tray(&handle);
+            });
+
+            TrayIconBuilder::with_id("main")
+                .icon(tray_icon(false))
+                .tooltip("Zapret2")
+                .show_menu_on_left_click(false)
+                .on_menu_event(|app, e| on_tray_menu(app, e.id().as_ref()))
+                .on_tray_icon_event(|tray, e| {
+                    if let TrayIconEvent::Click { button: MouseButton::Left, button_state: MouseButtonState::Up, .. } = e {
+                        show_main(tray.app_handle());
+                    }
+                })
+                .build(app)?;
+
+            // Фоновые шаги при старте: восстановить ipset после прерванного теста,
+            // включить обход, если он был включён при выходе.
+            let handle = app.handle().clone();
+            std::thread::spawn(move || {
+                let st = handle.state::<AppState>();
+                if let Ok(dir) = st.dir() {
+                    ipset::test_restore(&dir);
+                    let (last, mode) = {
+                        let s = st.settings.lock().unwrap();
+                        (s.last_enabled, s.mode.clone())
+                    };
+                    if last && mode == "process" && winapi::is_admin() && !st.runner.status().running {
+                        if let Err(e) = st.apply() {
+                            let _ = handle.emit("error", e);
+                        }
+                    }
+                }
+                refresh_tray(&handle);
+            });
+
+            if !start_in_tray {
+                show_main(app.handle());
+            }
+            Ok(())
+        })
+        .on_window_event(|window, event| {
+            if let WindowEvent::CloseRequested { api, .. } = event {
+                let app = window.app_handle();
+                if app.state::<AppState>().settings.lock().unwrap().close_to_tray {
+                    api.prevent_close();
+                    let _ = window.hide();
+                }
+            }
+        })
+        .invoke_handler(tauri::generate_handler![
+            overview,
+            status,
+            log_tail,
+            set_zapret_dir,
+            select_strategy,
+            enable,
+            disable,
+            set_mode,
+            set_game_filter,
+            set_ipset,
+            strategy_command,
+            list_read,
+            list_write,
+            test_targets,
+            test_start,
+            test_cancel,
+            test_last,
+            test_history,
+            set_test_params,
+            hosts_status,
+            hosts_apply,
+            hosts_remove,
+            hosts_update,
+            set_autostart,
+            set_close_to_tray,
+            set_language,
+            open_path,
+            quit_app,
+        ])
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app, event| {
+            // Процесс winws2, запущенный нами, при выходе гасим; служба продолжает работать.
+            if let tauri::RunEvent::Exit = event {
+                let st = app.state::<AppState>();
+                st.cancel.store(true, Ordering::SeqCst);
+                st.runner.stop_own();
+            }
+        });
+}
