@@ -68,7 +68,7 @@ npm run tauri build
 
 Before building, `scripts/sync-zapret.mjs` takes a clean copy of the build from git (`git archive HEAD`) and puts it into the installer's resources. The installer ends up in `src-tauri\target\release\bundle\nsis\`.
 
-Releases are built by GitHub Actions ([`release.yml`](.github/workflows/release.yml)) when a `vX.Y.Z` tag is pushed. The bundled zapret build is pinned to a commit there, and that file tree is verified on every release.
+Releases are built by GitHub Actions ([`release.yml`](.github/workflows/release.yml)) when a `vX.Y.Z` tag is pushed. The bundled zapret build is pinned to a commit there, and that file tree is verified on every release. The release notes come from the version's section in [CHANGELOG.md](CHANGELOG.md).
 
 ## Acknowledgements
 

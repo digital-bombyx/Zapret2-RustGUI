@@ -67,7 +67,7 @@ npm run tauri build
 
 Перед сборкой `scripts/sync-zapret.mjs` берёт чистую копию сборки из git (`git archive HEAD`) и кладёт её в ресурсы установщика. Готовый установщик появится в `src-tauri\target\release\bundle\nsis\`.
 
-Релизы собирает GitHub Actions ([`release.yml`](.github/workflows/release.yml)) при пуше тега `vX.Y.Z`. Встроенная сборка zapret там закреплена по коммиту, и это дерево файлов проверяется при каждом релизе.
+Релизы собирает GitHub Actions ([`release.yml`](.github/workflows/release.yml)) при пуше тега `vX.Y.Z`. Встроенная сборка zapret там закреплена по коммиту, и это дерево файлов проверяется при каждом релизе. Описание релиза берётся из раздела версии в [CHANGELOG.md](CHANGELOG.md).
 
 ## Благодарности
 

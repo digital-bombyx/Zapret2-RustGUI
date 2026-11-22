@@ -1,7 +1,8 @@
 name: Release
 
 # Сборка установщика Windows и публикация в GitHub Releases.
-# Запуск: пуш тега vX.Y.Z (версия тега должна совпадать с версией в tauri.conf.json)
+# Запуск: пуш тега vX.Y.Z (версия тега должна совпадать с версией в tauri.conf.json,
+# а в CHANGELOG.md должен быть раздел "## [X.Y.Z]" — он становится описанием релиза)
 # или вручную из вкладки Actions — тогда установщик сохраняется только как артефакт.
 
 on:
@@ -35,6 +36,9 @@ jobs:
           $ver = (Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json).version
           $tag = "${{ github.ref_name }}".TrimStart('v')
           if ($ver -ne $tag) { throw "Тег v$tag не совпадает с версией $ver в tauri.conf.json" }
+          # Раздел версии в CHANGELOG.md обязателен — проверяем до долгой сборки.
+          node scripts/release-notes.mjs "$tag" "$env:RUNNER_TEMP/notes-check.md"
+          if ($LASTEXITCODE -ne 0) { throw "Добавьте раздел ## [$tag] в CHANGELOG.md" }
 
       - name: Получить zapret-discord-youtube
         shell: pwsh
@@ -103,6 +107,14 @@ jobs:
             ${{ steps.sum.outputs.exe }}
             ${{ steps.sum.outputs.exe }}.sha256
 
+      - name: Описание релиза из CHANGELOG.md
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: >
+          node scripts/release-notes.mjs "${{ github.ref_name }}" "${{ runner.temp }}/release-notes.md"
+          --sha "${{ steps.sum.outputs.hash }}"
+          --file "${{ steps.sum.outputs.name }}"
+          --zapret "${{ steps.sum.outputs.zapret }}"
+
       - name: GitHub Release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
@@ -111,14 +123,4 @@ jobs:
           files: |
             ${{ steps.sum.outputs.exe }}
             ${{ steps.sum.outputs.exe }}.sha256
-          body: |
-            Установщик для Windows 10/11 (x64). Внутри встроенная сборка zapret-discord-youtube ${{ steps.sum.outputs.zapret }} с [PR #18202](https://github.com/Flowseal/zapret-discord-youtube/pull/18202) (zapret2).
-
-            Windows 10/11 (x64) installer with the bundled zapret-discord-youtube ${{ steps.sum.outputs.zapret }} build including PR #18202 (zapret2).
-
-            **SHA256** `${{ steps.sum.outputs.name }}`:
-            ```
-            ${{ steps.sum.outputs.hash }}
-            ```
-
-            > Антивирусы иногда помечают `winws2.exe` / WinDivert внутри установщика. Проверьте суммы бинарников по [релизу zapret2](https://github.com/bol-van/zapret2/releases).
+          body_path: ${{ runner.temp }}/release-notes.md

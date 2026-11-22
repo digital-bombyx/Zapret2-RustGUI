@@ -30,6 +30,7 @@
    npm run tauri build                 # сборка проходит
    ```
 4. Опишите в PR, что изменилось и как вы это проверили. Для изменений интерфейса приложите скриншоты.
+5. Если изменение заметно пользователю, добавьте строку в раздел `[Unreleased]` файла [CHANGELOG.md](CHANGELOG.md).
 
 ### Принципы проекта
 
@@ -71,7 +72,8 @@ Thanks for helping Zapret2-RustGUI!
   - branch from `main` as `feature/…` or `fix/…`;
   - keep one logical change per PR;
   - make sure `npm run check`, `cargo test` (in `src-tauri`) and `npm run tauri build` pass;
-  - add screenshots for UI changes.
+  - add screenshots for UI changes;
+  - add a line to `[Unreleased]` in [CHANGELOG.md](CHANGELOG.md) for user-visible changes.
 - **Project principles:**
   - never edit the strategy `.bat` files;
   - stay compatible with `service.bat`;
